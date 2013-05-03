@@ -120,6 +120,7 @@ clean:
 run:
 	ps3load $(OUTPUT).self
 
+# TODO TODO Find out a better rule to make .pkg files...
 pkg:	$(OUTPUT).self $(OUTPUT).pkg
 
 
