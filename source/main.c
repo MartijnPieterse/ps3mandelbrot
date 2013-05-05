@@ -28,6 +28,10 @@
  * Calculate the Mandelbrot
  */
 
+   float mCx = -0.5;  // Center X
+   float mCy = 0.0;  // Center Y
+   float mSx = 3.5;  // Size X * 2
+   float mSy = 3.5;  // Size Y * 2
 
 
 // 255 must be black
@@ -82,25 +86,18 @@ void drawFrame(rsxBuffer *buffer, float mCx, float mCy, float mSx, float mSy)
          float y = (mSy / buffer->height) * (i - (buffer->height/2)) + mCy;
          s32 color = mandelb(x, y);
          buffer->ptr[i * buffer->width + j] = iter2color(color);
-//         buffer->ptr[(i+1) * buffer->width + j] = iter2color(color);
-//         buffer->ptr[(i+1) * buffer->width + (j+1)] = iter2color(color);
-//         buffer->ptr[i * buffer->width + (j+1)] = iter2color(color);
       }
    }
 }
 
-int main(s32 argc, const char* argv[])
+int cmain(s32 argc, const char* argv[])
 {
    gcmContextData    *context;
    void              *host_addr = NULL;
    rsxBuffer          buffers[MAX_BUFFERS];
-   int                currentBuffer = 0;
    u16                width;
    u16                height;
-   float mCx = -0.5;  // Center X
-   float mCy = 0.0;  // Center Y
-   float mSx = 3.5;  // Size X * 2
-   float mSy = 3.5;  // Size Y * 2
+   int                currentBuffer = 0;
         
    /* 
     * Allocate a 32Mb buffer, alligned to a 1Mb boundary                          
@@ -126,7 +123,8 @@ int main(s32 argc, const char* argv[])
    paddata.ANA_L_V = 128;
    paddata.ANA_R_V = 128;
    float moves = 0.3;
-   while(1)
+   int quit=0;
+   while(quit==0)
    {
 
       // Check the pads.
@@ -140,7 +138,7 @@ int main(s32 argc, const char* argv[])
                                    
                if(paddata.BTN_START)
                {
-                  goto end;
+                  quit = 1;
                }
 
 
@@ -177,7 +175,6 @@ int main(s32 argc, const char* argv[])
 
    }
   
-end:
    gcmSetWaitFlip(context);
    for (int i=0; i < MAX_BUFFERS; i++)
    {

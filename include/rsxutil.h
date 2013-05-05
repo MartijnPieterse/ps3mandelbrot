@@ -11,6 +11,10 @@
 #include <rsx/rsx.h>
 #include <ppu-types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CB_SIZE		0x100000
 #define HOST_SIZE	(32*1024*1024)
 
@@ -38,5 +42,9 @@ int getResolution (u16 *width, u16 *height);
 gcmContextData *initScreen (void *host_addr, u32 size);
 /* Sets the target buffer to render to */
 void setRenderTarget(gcmContextData *context, rsxBuffer *buffer);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __RSXUTIL_H__ */
