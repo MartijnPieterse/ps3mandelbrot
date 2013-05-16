@@ -433,11 +433,6 @@ int main(s32 argc, const char* argv[])
 
    SpuClass          *spu = new SpuClass();
 
-//   spu->Calc(100);
-//   spu->Calc(200);
-//   spu->Calc(300);
-//   spu->Calc(400);
-
 
    // Ok, everything is setup. Now for the main loop.
    while(!pad->startPressed())
@@ -446,7 +441,7 @@ int main(s32 argc, const char* argv[])
 
       rsx->WaitFlip();
 
-      mandel.Render(rsx->getCurrentBuffer());
+      //mandel.Render(rsx->getCurrentBuffer());
 
       spu->Calc2(rsx->getCurrentBuffer(), mandel.get_x1(), mandel.get_x2(), mandel.get_y1(), mandel.get_y2());
       rsx->Flip();
