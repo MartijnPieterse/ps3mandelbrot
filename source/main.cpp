@@ -2,9 +2,14 @@
 #include <io/pad.h>
 #include <malloc.h>
 
+#include <sys/spu.h>
+
 #include "rsxutil.h"
 
 #include <cmath>
+
+#define DEBUG
+#include "debug.hpp"
 
 #define MAX_BUFFERS (2)
 
@@ -35,9 +40,9 @@ public:
       float ystep = (m_y2 - m_y1) / buffer->height;
       
 
-      for(i = 0; i < buffer->height; i++)
+      for(i = 0; i < buffer->height; i+=4)
       {
-         for(j = 0; j < buffer->width; j++)
+         for(j = 0; j < buffer->width; j+=4)
          {
             float x = m_x1 + xstep * j;
             float y = m_y1 + ystep * i;
@@ -54,9 +59,12 @@ public:
       m_x1 += delta;
       m_x2 -= delta;
 
+
       delta = (m_y2 - m_y1) * (1.0 - p) * 0.5;
       m_y1 += delta;
       m_y2 -= delta;
+
+      debugPrintf("%.16g %.16g -- %.16g\n", m_x1, m_x2, m_x2 - m_x1);
    }
 
    // --------------------------------------------------------------------
@@ -70,6 +78,11 @@ public:
       m_y1 += delta;
       m_y2 += delta;
    }
+
+   float get_x1(void) { return m_x1; }
+   float get_x2(void) { return m_x2; }
+   float get_y1(void) { return m_y1; }
+   float get_y2(void) { return m_y2; }
 
 private:
    // --------------------------------------------------------------------
@@ -190,6 +203,9 @@ private:
 
 };
 
+// -----------------------------------------------------------------------
+// --------------- PadClass ----------------------------------------------
+// -----------------------------------------------------------------------
 class PadClass
 {
 public:
@@ -249,6 +265,12 @@ public:
       return ((m_paddata.ANA_L_V & 0xff) / 128.0 - 1.0);
    }
 
+   // --------------------------------------------------------------------
+   float stickRV(void)
+   {
+      return ((m_paddata.ANA_R_V & 0xff) / 128.0 - 1.0);
+   }
+
 private:
 
    padInfo     m_padinfo;
@@ -257,16 +279,167 @@ private:
    bool        m_startPressed;
 };
 
+// -----------------------------------------------------------------------
+// --------------- SpuClass ----------------------------------------------
+// -----------------------------------------------------------------------
+extern const u8 spu_bin_end[];
+extern const u8 spu_bin[];
+extern const u32 spu_bin_size;
+#define ptr2ea(x) ((u64)(void *)(x))
+#include "spustr.h"
+class SpuClass
+{
+public:
+   // --------------------------------------------------------------------
+   SpuClass()
+   {
+      s32   r;
+
+      // Utilize all 6 SPUs
+      debugPrintf("Initializing 6 SPU's\n");
+      r = sysSpuInitialize(6, 0);
+      debugPrintf("Return value: %d\n", r);
+
+      debugPrintf("Address of spu target: %8x %8x %8x\n", spu_bin, spu_bin_end, spu_bin_size);
+
+      // Load binary image
+      debugPrintf("Loading ELF image.\n");
+      r = sysSpuImageImport(&m_image, spu_bin, 0);
+      debugPrintf("Return value: %d\n", r);
+
+      // Creat thread group...
+      debugPrintf("About to create SpuThreadGroup\n");
+      sysSpuThreadGroupAttribute grpattr = { 7+1, ptr2ea("mygroup"), 0, 0 };
+      r = sysSpuThreadGroupCreate(&m_group_id, 6, 100, &grpattr);
+      debugPrintf("Return value: %d\n", r);
+      debugPrintf("Group Id: %d\n", m_group_id);
+
+
+      // To be calculated array...
+      m_array = (uint32_t*)memalign(16, 24*sizeof(uint32_t));
+      m_command = (spucommand_t*)memalign(16, 6*sizeof(spucommand_t));
+
+      // Create all 6 SPU's
+      m_spu = (spustr_t *)memalign(16, 6*sizeof(spustr_t));
+      sysSpuThreadAttribute attr = { ptr2ea("mythread"), 8+1, SPU_THREAD_ATTR_NONE };
+      sysSpuThreadArgument arg[6];
+      for (int i=0; i<6; i++)
+      {
+         m_spu[i].id = -1;
+         m_spu[i].rank = i;
+         m_spu[i].count = 6;
+         m_spu[i].sync = 0;
+         m_spu[i].array_ea = ptr2ea(m_array);
+         m_spu[i].command_ea = ptr2ea(&m_command[i]);
+         arg[i].arg0 = ptr2ea(&m_spu[i]);
+
+         sysSpuThreadInitialize(&m_spu[i].id, m_group_id, i, &m_image, &attr, &arg[i]);
+         sysSpuThreadSetConfiguration(m_spu[i].id, SPU_SIGNAL1_OVERWRITE|SPU_SIGNAL2_OVERWRITE);
+      }
+
+      sysSpuThreadGroupStart(m_group_id);
+
+   }
+
+
+   // --------------------------------------------------------------------
+   ~SpuClass()
+   {
+      s32 r;
+      // Send Quit Command to All SPUs
+      debugPrintf("Sending QUIT command...\n");
+      m_command[0].cmd = CMD_QUIT;
+      m_command[1].cmd = CMD_QUIT;
+      m_command[2].cmd = CMD_QUIT;
+      m_command[3].cmd = CMD_QUIT;
+      m_command[4].cmd = CMD_QUIT;
+      m_command[5].cmd = CMD_QUIT;
+
+      /* Send signal notification to waiting spus */
+      for (int i = 0; i < 6; i++)
+      {
+         r = sysSpuThreadWriteSignal(m_spu[i].id, 0, 1);
+//         debugPrintf("Sending signal... %08x\n", r);
+      }
+
+
+      u32 cause, status;
+      debugPrintf("Joining SPU thread group... ");
+
+      r = sysSpuThreadGroupJoin(m_group_id, &cause, &status);
+      debugPrintf("%08x\n", r);
+      debugPrintf("cause=%d status=%d\n", cause, status);
+
+      r = sysSpuImageClose(&m_image);
+      debugPrintf("Closing image... %08x\n", r);
+
+      free(m_array);
+      free(m_spu);
+
+   }
+
+   void Calc2(rsxBuffer *buffer, float x1, float x2, float y1, float y2)
+   {
+      s32 r;
+
+      int next_spu = 0;
+      for (int i = 0; i < 6; i++)
+      {
+         m_spu[i].sync = 1;
+      }
+
+      for (int j = 0; j < buffer->height;)
+      {
+         if (m_spu[next_spu].sync != 0)
+         {
+            m_spu[next_spu].sync = 0;
+            m_command[next_spu].start = x1;
+            m_command[next_spu].end = x2;
+            m_command[next_spu].yvalue = y1 + ((y2-y1) / buffer->height) * j;
+            m_command[next_spu].cmd = CMD_CALC;
+            m_command[next_spu].width = buffer->width;
+            m_command[next_spu].dest_ea = ptr2ea(&(buffer->ptr[j*buffer->width]));
+
+            r = sysSpuThreadWriteSignal(m_spu[next_spu].id, 0, 1);
+
+            j++;
+         }
+         next_spu = (next_spu+1)%6;
+      }
+
+   }
+private:
+
+
+   u32            m_group_id;
+   sysSpuImage    m_image;
+   uint32_t      *m_array;
+   spucommand_t  *m_command;
+   spustr_t      *volatile m_spu;
+
+};
+
+
+// -----------------------------------------------------------------------
+// --------------- main ----------------------------------------------
+// -----------------------------------------------------------------------
 int main(s32 argc, const char* argv[])
 {
+   debugInit();
 
    MandelBrot         mandel;
    RSXClass          *rsx = new RSXClass();
    PadClass          *pad = new PadClass();
 
+   SpuClass          *spu = new SpuClass();
+
+//   spu->Calc(100);
+//   spu->Calc(200);
+//   spu->Calc(300);
+//   spu->Calc(400);
+
 
    // Ok, everything is setup. Now for the main loop.
-
    while(!pad->startPressed())
    {
       pad->check();
@@ -274,14 +447,19 @@ int main(s32 argc, const char* argv[])
       rsx->WaitFlip();
 
       mandel.Render(rsx->getCurrentBuffer());
+
+      spu->Calc2(rsx->getCurrentBuffer(), mandel.get_x1(), mandel.get_x2(), mandel.get_y1(), mandel.get_y2());
       rsx->Flip();
 
       mandel.Move(pad->stickLH()*0.1, pad->stickLV()*0.1);
-      mandel.Zoom(1.0);
+      mandel.Zoom(1.0 + pad->stickRV()*0.05);
    }
 
+   delete spu;
    delete rsx;
    delete pad; 
+
+   debugStop();
 
    return 0;
 

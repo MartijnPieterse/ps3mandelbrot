@@ -7,7 +7,7 @@ ifeq ($(strip $(PSL1GHT)),)
 $(error "Please set PSL1GHT in your environment. export PSL1GHT=<path>")
 endif
 
-include $(PSL1GHT)/ppu_rules
+include $(PSL1GHT)/spu_rules
 
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
@@ -18,27 +18,22 @@ include $(PSL1GHT)/ppu_rules
 TARGET		:=	$(notdir $(CURDIR))
 BUILD		:=	build
 SOURCES		:=	source
-DATA		:=	data
-INCLUDES	:=	include
+DATA		:=
+INCLUDES	:=	include ../include
 
-TITLE		:=	Mandelbrot Calculator
-APPID		:=	MAPI00001
-CONTENTID	:=	UP0001-$(APPID)_00-0000000000000000
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
 
-FLAGS		=	-O3 -Wall -maltivec -mcpu=cell $(MACHDEP) $(INCLUDE)
-CFLAGS		=	$(FLAGS) -std=c99
-CXXFLAGS	=	$(FLAGS)
+CFLAGS		=	-O2 -Wall $(MACHDEP) $(INCLUDE)
+CXXFLAGS	=	$(CFLAGS)
 
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
-
 
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
 #---------------------------------------------------------------------------------
-LIBS	:=	-lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm -lnet -lsysmodule
+LIBS	:= -lsputhread
 
 #---------------------------------------------------------------------------------
 # list of directories containing libraries, this must be the top level containing
@@ -69,8 +64,7 @@ CFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.c)))
 CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 sFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.S)))
-BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*))) \
-			spu.bin
+BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
 #---------------------------------------------------------------------------------
 # use CXX for linking C++ projects, CC for standard C
@@ -100,36 +94,17 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib) \
 					$(LIBPSL1GHT_LIB)
 
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
-#.PHONY: $(BUILD) clean
-# Was:
-.PHONY: $(BUILD) clean bin
+.PHONY: $(BUILD) clean
 
 #---------------------------------------------------------------------------------
-# Was:
-#$(BUILD): bin
-$(BUILD): bin
+$(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 #---------------------------------------------------------------------------------
-bin:
-	@$(MAKE) --no-print-directory -C spu
-
-#---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@$(MAKE) --no-print-directory -C spu clean
-	@rm -fr $(BUILD) $(OUTPUT).elf $(OUTPUT).self $(DATA)/spu.bin
-
-
-
-#---------------------------------------------------------------------------------
-run:
-	ps3load $(OUTPUT).self
-
-# TODO TODO Find out a better rule to make .pkg files...
-pkg:	$(OUTPUT).self $(OUTPUT).pkg
-
+	@rm -fr $(BUILD) $(OUTPUT).elf
 
 #---------------------------------------------------------------------------------
 else
@@ -139,17 +114,10 @@ DEPENDS	:= $(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 # main targets
 #---------------------------------------------------------------------------------
-$(OUTPUT).self: $(OUTPUT).elf
+../../data/spu.bin: $(OUTPUT).elf
+	cp $< $@
+
 $(OUTPUT).elf: $(OFILES)
-
-
-#---------------------------------------------------------------------------------
-# This rule links in binary data with the .bin extension
-#---------------------------------------------------------------------------------
-%.bin.o	:	%.bin
-#---------------------------------------------------------------------------------
-	@echo $(notdir $<)
-	@$(bin2o)
 
 -include $(DEPENDS)
 
