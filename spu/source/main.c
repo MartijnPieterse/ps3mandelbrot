@@ -29,24 +29,95 @@ static void send_response(uint32_t x) {
 	mfc_putf(&spu.sync, ea, 4, TAG, 0, 0);
 }
 
-uint32_t calc(float x0, float y0)
+void calc(spucommand_t *command, uint32_t *data)
 {
-   uint32_t    r = 0x0;
 
-   float x=0.0;
-   float y=0.0;
+   float       y0 = command->yvalue;
+   uint32_t    i;
 
-   while (x*x + y*y < 4.0 && r < 0x00ffffff)
+   for (i=0; i<command->width; i++)
    {
-      float xtemp = x*x - y*y + x0;
-      y = 2*x*y + y0;
+      float x0 = command->start + ((command->end - command->start) / command->width) * i;
 
-      x = xtemp;
+      uint32_t    r = 0x0;
 
-      r += 0x00010101;
+      float x=0.0;
+      float y=0.0;
+
+      while (x*x + y*y < 4.0 && r < 0x00ffffff)
+      {
+         float xtemp = x*x - y*y + x0;
+         y = 2*x*y + y0;
+
+         x = xtemp;
+
+         r += 0x00010101;
+      }
+
+      *data++ = r;
    }
-   
-   return r;
+}
+
+void calc_vector(spucommand_t *command, uint32_t *data)
+{
+   int   i,j;
+   vector float   y0;
+   vector float   four = spu_splats((float)4.0);
+   vector float   x0;
+   vector float   x0d;
+
+   for (j=0; j<4; j++)
+   {
+      float x1 = ((command->end - command->start) / command->width);
+      float xs = command->start + x1*j;
+      // Load into x0
+      x0 = spu_insert(xs, x0, j);
+
+      x1 *= 4;
+      x0d = spu_insert(x1, x0d, j);
+   }
+
+   y0 = spu_splats(command->yvalue);
+
+   // we are going to do 4 calculations at the same time.
+   for (i=0; i<command->width/4; i++)
+   {
+      vector unsigned int r = spu_splats((unsigned int)0x0);
+
+      vector float x = spu_splats((float)0.0);
+      vector float y = spu_splats((float)0.0);
+      vector unsigned int rv = spu_splats((unsigned int)0);
+      vector unsigned int use = spu_splats((unsigned int)0xffffffff);
+
+      int depth=0;
+      while (depth++ < 255)
+      {
+         vector float xtemp = x*x - y*y + x0;
+         y = 2*x*y + y0;
+
+         x = xtemp;
+
+         vector float d = x*x + y*y;
+
+         vector unsigned int n = spu_cmpgt(four, d);
+
+         /* use starts as 0xffff, dus normaal nemen we r altijd */
+         rv = spu_sel(rv, r, use);
+
+         /* pas use aan, afhankelijk van n */
+         use = spu_and(n, use);
+
+         r += spu_splats((unsigned int)0x00010101);
+      }
+
+      *(vector unsigned int*)data = rv;
+      data+=4;
+
+      x0 += x0d;
+
+
+   }
+
 }
 
 /* -------------------------------------------------------------------- */
@@ -56,11 +127,10 @@ int main(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
 	mfc_get(&spu, spu_ea, sizeof(spustr_t), TAG, 0, 0);
 	wait_for_completion();
 
-   uint32_t data[1920];    // Max resolution is supposed to be 1920x1080.
+   uint32_t data[1920] __attribute__((aligned(16)));    // Max resolution is supposed to be 1920x1080.
 
    while (1)
    {
-      uint32_t i;
       /* blocking wait for signal notification */
       spu_read_signal1();
 
@@ -73,12 +143,11 @@ int main(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
       /* If the command is to quit, break out of the loop */
       if (command.cmd == CMD_QUIT) break;
 
-      /* Fill the results.. */
-      for (i=0; i<command.width; i++)
-      {
-         float p = command.start + ((command.end - command.start) / command.width) * i;
-         data[i] = calc(p, command.yvalue);
-      }
+      uint32_t t = spu_read_decrementer();
+
+      calc_vector(&command, data);
+
+      t = t - spu_read_decrementer();
 
       /* write the result back */
       mfc_put(data, command.dest_ea, command.width*sizeof(uint32_t), TAG, 0, 0);
@@ -87,7 +156,7 @@ int main(uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t arg4) {
         share is written back before sync */
 
       /* send the response message */
-      send_response(1);
+      send_response(t);
       wait_for_completion();
    }
 

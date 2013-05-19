@@ -63,8 +63,6 @@ public:
       delta = (m_y2 - m_y1) * (1.0 - p) * 0.5;
       m_y1 += delta;
       m_y2 -= delta;
-
-      debugPrintf("%.16g %.16g -- %.16g\n", m_x1, m_x2, m_x2 - m_x1);
    }
 
    // --------------------------------------------------------------------
@@ -157,6 +155,8 @@ public:
       {
          makeBuffer( &m_buffers[i], m_width, m_height, i);
       }
+
+      debugPrintf("Screen size = %d, %d\n", m_width, m_height);
 
       flip(m_context, MAX_BUFFERS - 1);
    }
@@ -378,20 +378,30 @@ public:
 
    }
 
+// 1 SPU = 210ms
+// 2 SPU = 104ms
+// 3 SPU =  70ms
+// 4 SPU =  51ms
+// 5 SPU =  42ms
+// 6 SPU =  35ms
+#define SPU_USAGE (6)
    void Calc2(rsxBuffer *buffer, float x1, float x2, float y1, float y2)
    {
-      s32 r;
+      unsigned long long   t = __mftb();
+      int sput = 0;
 
       int next_spu = 0;
-      for (int i = 0; i < 6; i++)
+      for (int i = 0; i < SPU_USAGE; i++)
       {
          m_spu[i].sync = 1;
+         m_spu[i].response = 0;
       }
 
       for (int j = 0; j < buffer->height;)
       {
          if (m_spu[next_spu].sync != 0)
          {
+            sput += m_spu[next_spu].response;
             m_spu[next_spu].sync = 0;
             m_command[next_spu].start = x1;
             m_command[next_spu].end = x2;
@@ -400,13 +410,34 @@ public:
             m_command[next_spu].width = buffer->width;
             m_command[next_spu].dest_ea = ptr2ea(&(buffer->ptr[j*buffer->width]));
 
-            r = sysSpuThreadWriteSignal(m_spu[next_spu].id, 0, 1);
+            (void)sysSpuThreadWriteSignal(m_spu[next_spu].id, 0, 1);
 
             j++;
          }
-         next_spu = (next_spu+1)%6;
+         next_spu = (next_spu+1)%SPU_USAGE;
       }
 
+      // Wait for all spus to finish.
+      for (int i = 0; i < SPU_USAGE; i++)
+      {
+         while (m_spu[i].sync == 0);
+         sput += m_spu[next_spu].response;
+      }
+
+      t = __mftb() - t;
+
+      // 400.000 = 5000us
+      // 400 = 5us
+      //  80 = 1us
+      t = t / 80;
+      debugPrintf("tijd: %d.%06d   ", t / 1000000, t % 1000000);
+
+      // 200ms = alle lijnen = 15893107
+      // 1 lijn is 32343
+      // ~490 lijnen, res = 480. Klopt.
+      // Ook 80MHz?
+      sput = sput / 80;
+      debugPrintf("sputijd: %d.%06d\n", sput / 1000000, sput % 1000000);
    }
 private:
 
